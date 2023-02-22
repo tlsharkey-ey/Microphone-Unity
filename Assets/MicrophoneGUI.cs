@@ -5,11 +5,8 @@ using UnityEngine.Events;
 using UnityEngine.UI;
 using TMPro;
 
-[RequireComponent(typeof(WebMic))]
 public class MicrophoneGUI : MonoBehaviour
 {
-    [SerializeField]
-    private WebMic Mic;
     [SerializeField]
     private Button RecordButton;
     [SerializeField]
@@ -18,13 +15,15 @@ public class MicrophoneGUI : MonoBehaviour
     private Color IDLE_COLOR;
     [SerializeField]
     private TMP_Dropdown Devices;
+    private int RECORD_FREQUENCY = 44100;
     private int MAX_RECORD_TIME = 1800; // 30 minutes
     private float startTime = 0;
     private object RecordingLock = new object();
     private Queue<AudioClip> RecordingProcessed = new Queue<AudioClip>();
+    private AudioClip workingClip;
 
 
-    public bool IsRecording => Mic.RecordingState() == WebMic.State.Recording;
+    public bool IsRecording => Microphone.IsRecording(SelectedDevice);
     public string SelectedDevice => Devices.options[Devices.value].text;
     public UnityEvent<AudioClip> OnRecorded;
 
@@ -32,9 +31,10 @@ public class MicrophoneGUI : MonoBehaviour
     private void Awake()
     {
         // Setup Mic
-        Mic = GetComponent<WebMic>();
-        Mic.SetDefaultRecordingDevice();
-        Mic.MaxRecordTime = MAX_RECORD_TIME;
+#if UNITY_WEBGL && !UNITY_EDITOR
+        Microphone.Init();
+        Microphone.QueryAudioInput();
+#endif
         this.GetPermissions();
 
         // Setup GUI
@@ -45,6 +45,9 @@ public class MicrophoneGUI : MonoBehaviour
 
     private void Update()
     {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        Microphone.Update();
+#endif
         // Process recording queue
         while (RecordingProcessed.Count > 0)
         {
@@ -76,42 +79,21 @@ public class MicrophoneGUI : MonoBehaviour
     private void StartRecording()
     {
         // Start recording
-        if (Mic.StartRecording())
-        {
-            this.startTime = Time.time;
-            Devices.enabled = false;
-            RecordIcon.color = RECORDING_COLOR;
-            // StartCoroutine(RecordingAnimation());
-        }
-        else
-        {
-            Debug.LogError("[MicrophoneGUI] Failed to start recording");
-        }
+        workingClip = Microphone.Start(SelectedDevice, false, MAX_RECORD_TIME, RECORD_FREQUENCY);
+        this.startTime = Time.time;
+        Devices.enabled = false;
+        RecordIcon.color = RECORDING_COLOR;
+        StartCoroutine(RecordingAnimation());
     }
 
     private void StopRecording()
     {
         // Stop recording
-        AudioClip clip = Mic.StopRecording();
-
-#if UNITY_WEBGL && !UNITY_EDITOR
-        Devices.enabled = false;
-#else
+        Microphone.End(SelectedDevice);
         Devices.enabled = true;
-#endif
         RecordIcon.color = IDLE_COLOR;
 
-        Trim(clip);
-        // Trim silence in thread
-        // #if UNITY_WEBGL && !UNITY_EDITOR
-        // TrimSilence(clip, 0.01f);
-        // #else
-        //         System.Threading.Thread thread = new System.Threading.Thread(() =>
-        //         {
-        //             TrimSilence(clip, 0.01f);
-        //         });
-        // thread.Start();
-        // #endif
+        Trim(workingClip);
     }
 
     private IEnumerator RecordingAnimation()
@@ -120,15 +102,23 @@ public class MicrophoneGUI : MonoBehaviour
         while (IsRecording)
         {
             // get data from microphone in 256 sample chunks
+            // #if UNITY_WEBGL && !UNITY_EDITOR
+            //             if (!Mic.GetData(data)) continue;
+            // #else
+            //             float currentDuration = Time.time - startTime;
+            //             int currentPos = (int)(currentDuration * RECORD_FREQUENCY);
+            //             int micPosition = currentPos - (256 + 1); // null check
+            //             if (micPosition < 0) continue;
+            //             Mic.RecordingClip.GetData(data, micPosition);
+            // #endif
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (!Mic.GetData(data)) continue;
+            float volume = Microphone.GetVolume(SelectedDevice);
 #else
             float currentDuration = Time.time - startTime;
-            int currentPos = (int)(currentDuration * WebMic.FreqRate);
-            int micPosition = currentPos - (256 + 1); // null check
-            if (micPosition < 0) continue;
-            Mic.RecordingClip.GetData(data, micPosition);
-#endif
+            int currentPos = (int)(currentDuration * RECORD_FREQUENCY);
+            int sampleStart = currentPos - (data.Length + 1); // null check
+            if (sampleStart < 0) continue;
+            workingClip.GetData(data, sampleStart);
 
             // get volume
             float a = 0;
@@ -138,6 +128,7 @@ public class MicrophoneGUI : MonoBehaviour
             }
             float volume = a / 256;
             // float volume = Mathf.Max(data);
+#endif
 
             // set scale of record icon
             RecordIcon.transform.localScale = Vector3.one * (1 + volume * 2);

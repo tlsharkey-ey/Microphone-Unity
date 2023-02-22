@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/UnityWebGLMicrophone/Scenes/DisplayMics.unity
+    guid: 60014a8c4f0852447ad1dfd9290e18b5
   m_configObjects: {}
